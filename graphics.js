@@ -56,7 +56,7 @@ fn vertex_main(@builtin(vertex_index) v_idx: u32) -> VertexOut {
     normal = normalize(vec2f(-dir.y, dir.x));
   }
   
-  let thickness_pixels = 2.0; 
+  let thickness_pixels = 4.0; 
   let offset_screen = normal * (thickness_pixels / 2.0);
 
   var pos_screen: vec2f;
@@ -139,7 +139,7 @@ fn vertex_main(@builtin(vertex_index) v_idx: u32) -> VertexOut {
   
   let local_offset = corners[local_v_idx];
 
-  let marker_radius_pixels = 5.0;
+  let marker_radius_pixels = 10.0;
   let pos_screen = center_screen + (local_offset * marker_radius_pixels);
 
   let pos_ndc = (pos_screen / res) * 2.0 - 1.0;
@@ -173,6 +173,105 @@ function createOrthographicMatrix(left, right, bottom, top, near, far) {
   ]);
 }
 
+let period = 10.0;
+let eccentricity = 0.5;
+let t0 = 0.0;
+const t0input = document.getElementById("t0");
+let sMA = 5.0;
+let inc = 0.0;
+let arg = 0.0;
+let long = 0.0;
+
+let A = 0;
+const Ainput = document.getElementById("A");
+let B = 0;
+const Binput = document.getElementById("B");
+let F = 0;
+const Finput = document.getElementById("F");
+let G = 0;
+const Ginput = document.getElementById("G");
+function thieleInnes() {
+  A = sMA * (Math.cos(long)*Math.cos(arg) - Math.sin(long)*Math.sin(arg)*Math.cos(inc));
+  B = sMA * (Math.sin(long)*Math.cos(arg) + Math.cos(long)*Math.sin(arg)*Math.cos(inc));
+  F = sMA * (-Math.cos(long)*Math.sin(arg) - Math.sin(long)*Math.cos(arg)*Math.cos(inc));
+  G = sMA * (-Math.sin(long)*Math.sin(arg) + Math.cos(long)*Math.cos(arg)*Math.cos(inc));
+  Ainput.value = A.toFixed(3);
+  Binput.value = B.toFixed(3);
+  Finput.value = F.toFixed(3);
+  Ginput.value = G.toFixed(3);
+  Ainput.max = sMA.toString();
+  Binput.max = sMA.toString();
+  Finput.max = sMA.toString();
+  Ginput.max = sMA.toString();
+  Ainput.min = (-sMA).toString();
+  Binput.min = (-sMA).toString();
+  Finput.min = (-sMA).toString();
+  Ginput.min = (-sMA).toString();
+}
+thieleInnes();
+
+
+document.getElementById("period").addEventListener("input", (e) => {
+    period = parseFloat(e.target.value);
+    t0input.max = period.toString();
+});
+
+document.getElementById("t0").addEventListener("input", (e) => {
+    t0 = parseFloat(e.target.value);
+});
+
+document.getElementById("eccentricity").addEventListener("input", (e) => {
+    eccentricity = parseFloat(e.target.value);
+});
+
+document.getElementById("semi-major-axis").addEventListener("input", (e) => {
+    sMA = parseFloat(e.target.value);
+    thieleInnes();
+    Ainput.max = sMA.toString();
+    Binput.max = sMA.toString();
+    Finput.max = sMA.toString();
+    Ginput.max = sMA.toString();
+    Ainput.min = (-sMA).toString();
+    Binput.min = (-sMA).toString();
+    Finput.min = (-sMA).toString();
+    Ginput.min = (-sMA).toString();
+});
+
+document.getElementById("inclination").addEventListener("input", (e) => {
+    inc = parseFloat(e.target.value) * Math.PI / 180.0;
+    thieleInnes();
+});
+
+document.getElementById("argument-of-periapsis").addEventListener("input", (e) => {
+    arg = parseFloat(e.target.value) * Math.PI / 180.0;
+    thieleInnes();
+});
+
+document.getElementById("longitude-of-ascending-node").addEventListener("input", (e) => {
+    long = parseFloat(e.target.value) * Math.PI / 180.0;
+    thieleInnes();
+});
+
+function M(t) {
+    return 2 * Math.PI * (t - t0) / period;
+}
+
+function E(M, e) {
+    let E = M;
+    for (let i = 0; i < 10; i++) {
+        E = M + e * Math.sin(E);
+    }
+    return E;
+}
+
+function X(E, e) {
+    return Math.cos(E) - e;
+}
+
+function Y(E, e) {
+    return Math.sqrt(1 - e*e) * Math.sin(E);
+}
+
 async function init() {
   if (!navigator.gpu) throw Error("WebGPU not supported.");
   
@@ -193,24 +292,11 @@ async function init() {
   const BREAK = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0];
   const N = 1000;
   const rawPoints = new Float32Array(N * 8);
-  for (let i = 0; i < N; i++) {
-    const t = i / (N - 1);
-    const idx = i * 8;
-    rawPoints[idx + 0] = 0.0;
-    rawPoints[idx + 1] = 1.0 - 2.0 * t;
-    rawPoints[idx + 2] = 0.0;
-    rawPoints[idx + 3] = 1.0;
-    rawPoints[idx + 4] = t;
-    rawPoints[idx + 5] = 0.0;
-    rawPoints[idx + 6] = 1.0 - t;
-    rawPoints[idx + 7] = 1.0;
-  }
   const pointCount = rawPoints.length / 8;
 
   const rawMarkers = new Float32Array([
     200.0, 200.0, 0.0, 1.0,    1.0, 1.0, 0.0, 1.0,
     300.0, 300.0, 0.0, 1.0,    0.0, 1.0, 1.0, 1.0,
-    500.0, 500.0, 0.0, 1.0,    1.0, 0.0, 1.0, 1.0,
   ]);
   const markerCount = rawMarkers.length / 8;
 
@@ -274,42 +360,66 @@ async function init() {
     ],
   });
 
+  function resizeCanvasToDisplaySize(canvas, device) {
+    const rect = canvas.getBoundingClientRect();
+    const width = Math.round(rect.width * window.devicePixelRatio);
+    const height = Math.round(rect.height * window.devicePixelRatio);
+
+    if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+        
+        context.configure({
+            device: device,
+            format: navigator.gpu.getPreferredCanvasFormat(),
+            alphaMode: "premultiplied",
+        });
+    }
+  }
+
   function frame(timestamp) {
-    canvas.height = canvas.clientHeight || 600;
-    canvas.width = canvas.clientWidth || 800;
+    resizeCanvasToDisplaySize(canvas, device);
     const time = timestamp / 1000.0;
 
     for (let i = 0; i < pointCount; i++) {
         const stride = i * 8;
-        rawPoints[stride] = i / pointCount * 1000.0 - 500.0;
-        if(i > 500) {
-            rawPoints[stride+1] = Math.cos((i+19) / 50 - 5*time) * 100;
-        } else {
-            rawPoints[stride+1] = Math.sin(i / 50 + 5*time) * 100;
-        }
-        if(i > 450 && i < 550 && i%3 == 0) {
-            rawPoints[stride+3] = 0.0;
-        }
-        
-        rawPoints[stride+4] = i / pointCount;
+        M = i / (pointCount-1) * 2 * Math.PI;
+        Evalue = E(M, eccentricity);
+        Xvalue = X(Evalue, eccentricity);
+        Yvalue = Y(Evalue, eccentricity);
+        rawPoints[stride+0] = 50*(A*Xvalue + F*Yvalue);
+        rawPoints[stride+1] = 50*(B*Xvalue + G*Yvalue);
+        rawPoints[stride+2] = 0.0;
+        rawPoints[stride+3] = 1.0;
+        rawPoints[stride+4] = Math.abs(500-i) / pointCount;
         rawPoints[stride+5] = 0.3*(Math.cos(time*3)+1.0);           
-        rawPoints[stride+6] = 1.0 - i / pointCount;
+        rawPoints[stride+6] = 1.0 - Math.abs(500-i) / pointCount;
         rawPoints[stride+7] = 1.0;
     }
     device.queue.writeBuffer(pointsBuffer, 0, rawPoints);
 
-    for (let i = 0; i < markerCount; i++) {
-        const stride = i * 8;
-        rawMarkers[stride] = 100.0 * Math.cos(time + i);
-        rawMarkers[stride+1] = 100.0 * Math.sin(time + i);
-        rawMarkers[stride+2] = 0.0;
-        rawMarkers[stride+3] = 1.0;
+    // Center of mass marker
+    rawMarkers[0] = 0.0;
+    rawMarkers[1] = 0.0;
+    rawMarkers[2] = 0.0;
+    rawMarkers[3] = 1.0;
+    rawMarkers[4] = 1.0;
+    rawMarkers[5] = 1.0;
+    rawMarkers[6] = 1.0;
+    rawMarkers[7] = 1.0;
 
-        rawMarkers[stride+4] = 1.0;
-        rawMarkers[stride+5] = 1.0 - 0.5*(Math.cos(time*2)+1.0);
-        rawMarkers[stride+6] = 0.5*(Math.cos(time*2)+1.0);
-        rawMarkers[stride+7] = 1.0;
-    }
+    Mmarker = (time - t0) / period * 2 * Math.PI;
+    Emarker = E(Mmarker, eccentricity);
+    Xmarker = X(Emarker, eccentricity);
+    Ymarker = Y(Emarker, eccentricity);
+    rawMarkers[8] = 50*(A*Xmarker + F*Ymarker);
+    rawMarkers[9] = 50*(B*Xmarker + G*Ymarker);
+    rawMarkers[10] = 0.0;
+    rawMarkers[11] = 1.0;
+    rawMarkers[12] = 1.0;
+    rawMarkers[13] = 0.0;
+    rawMarkers[14] = 0.0;
+    rawMarkers[15] = 1.0;
     device.queue.writeBuffer(markerBuffer, 0, rawMarkers);
 
     const cameraX = 0;
