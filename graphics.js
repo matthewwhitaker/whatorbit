@@ -164,12 +164,48 @@ fn fragment_main(fragData: VertexOut) -> @location(0) vec4f {
 }
 `;
 
+function createRotationX(radians) {
+  const c = Math.cos(radians);
+  const s = Math.sin(radians);
+  return new Float32Array([
+    1, 0, 0, 0,
+    0, c, s, 0,
+    0, -s, c, 0,
+    0, 0, 0, 1
+  ]);
+}
+
+function createRotationY(radians) {
+  const c = Math.cos(radians);
+  const s = Math.sin(radians);
+  return new Float32Array([
+    c, 0, -s, 0,
+    0, 1, 0, 0,
+    s, 0, c, 0,
+    0, 0, 0, 1
+  ]);
+}
+
+function multiply4x4(a, b) {
+  const out = new Float32Array(16);
+  for (let i = 0; i < 4; i++) { // Column
+    for (let j = 0; j < 4; j++) { // Row
+      out[i * 4 + j] = 
+        a[0 * 4 + j] * b[i * 4 + 0] +
+        a[1 * 4 + j] * b[i * 4 + 1] +
+        a[2 * 4 + j] * b[i * 4 + 2] +
+        a[3 * 4 + j] * b[i * 4 + 3];
+    }
+  }
+  return out;
+}
+
 function createOrthographicMatrix(left, right, bottom, top, near, far) {
   return new Float32Array([
-    2 / (right - left), 0, 0, 0,
-    0, 2 / (top - bottom), 0, 0,
-    0, 0, -2 / (far - near), 0,
-    -(right + left) / (right - left), -(top + bottom) / (top - bottom), -(far + near) / (far - near), 1
+    2 / (right - left), 0, 0, 0, // X
+    0, 2 / (top - bottom), 0, 0, // Y
+    0, 0, 1 / (far - near), 0, // Z
+    -(right + left) / (right - left), -(top + bottom) / (top - bottom), -near / (far - near), 1 // Translation
   ]);
 }
 
@@ -186,27 +222,39 @@ let A = 0;
 const Ainput = document.getElementById("A");
 let B = 0;
 const Binput = document.getElementById("B");
+let C = 0;
+const Cinput = document.getElementById("C");
 let F = 0;
 const Finput = document.getElementById("F");
 let G = 0;
 const Ginput = document.getElementById("G");
+let H = 0;
+const Hinput = document.getElementById("H");
 function thieleInnes() {
   A = sMA * (Math.cos(long)*Math.cos(arg) - Math.sin(long)*Math.sin(arg)*Math.cos(inc));
   B = sMA * (Math.sin(long)*Math.cos(arg) + Math.cos(long)*Math.sin(arg)*Math.cos(inc));
+  C = sMA * (Math.sin(arg)*Math.sin(inc));
   F = sMA * (-Math.cos(long)*Math.sin(arg) - Math.sin(long)*Math.cos(arg)*Math.cos(inc));
   G = sMA * (-Math.sin(long)*Math.sin(arg) + Math.cos(long)*Math.cos(arg)*Math.cos(inc));
+  H = sMA * (Math.cos(arg)*Math.sin(inc));
   Ainput.value = A.toFixed(3);
   Binput.value = B.toFixed(3);
+  Cinput.value = C.toFixed(3);
   Finput.value = F.toFixed(3);
   Ginput.value = G.toFixed(3);
+  Hinput.value = H.toFixed(3);
   Ainput.max = sMA.toString();
   Binput.max = sMA.toString();
+  Cinput.max = sMA.toString();
   Finput.max = sMA.toString();
   Ginput.max = sMA.toString();
+  Hinput.max = sMA.toString();
   Ainput.min = (-sMA).toString();
   Binput.min = (-sMA).toString();
+  Cinput.min = (-sMA).toString();
   Finput.min = (-sMA).toString();
   Ginput.min = (-sMA).toString();
+  Hinput.min = (-sMA).toString();
 }
 thieleInnes();
 
@@ -227,14 +275,6 @@ document.getElementById("eccentricity").addEventListener("input", (e) => {
 document.getElementById("semi-major-axis").addEventListener("input", (e) => {
     sMA = parseFloat(e.target.value);
     thieleInnes();
-    Ainput.max = sMA.toString();
-    Binput.max = sMA.toString();
-    Finput.max = sMA.toString();
-    Ginput.max = sMA.toString();
-    Ainput.min = (-sMA).toString();
-    Binput.min = (-sMA).toString();
-    Finput.min = (-sMA).toString();
-    Ginput.min = (-sMA).toString();
 });
 
 document.getElementById("inclination").addEventListener("input", (e) => {
@@ -377,6 +417,39 @@ async function init() {
     }
   }
 
+  let currentRotX = 0;
+  let currentRotY = 0;
+  let targetRotX = 0;
+  let targetRotY = 0;
+
+  let isDragging = false;
+  let previousPointerX = 0;
+  let previousPointerY = 0;
+
+  canvas.addEventListener('pointerdown', (e) => {
+    isDragging = true;
+    previousPointerX = e.clientX;
+    previousPointerY = e.clientY;
+  });
+
+  window.addEventListener('pointerup', () => {
+    isDragging = false;
+  });
+
+  window.addEventListener('pointermove', (e) => {
+    if (!isDragging) return;
+
+    const deltaX = e.clientX - previousPointerX;
+    const deltaY = e.clientY - previousPointerY;
+
+    const sensitivity = 0.01;
+    targetRotY += deltaX * sensitivity; 
+    targetRotX += deltaY * sensitivity;
+
+    previousPointerX = e.clientX;
+    previousPointerY = e.clientY;
+  });
+
   function frame(timestamp) {
     resizeCanvasToDisplaySize(canvas, device);
     const time = timestamp / 1000.0;
@@ -389,11 +462,11 @@ async function init() {
         Yvalue = Y(Evalue, eccentricity);
         rawPoints[stride+0] = 50*(A*Xvalue + F*Yvalue);
         rawPoints[stride+1] = 50*(B*Xvalue + G*Yvalue);
-        rawPoints[stride+2] = 0.0;
+        rawPoints[stride+2] = 50*(C*Xvalue + H*Yvalue);
         rawPoints[stride+3] = 1.0;
-        rawPoints[stride+4] = Math.abs(500-i) / pointCount;
-        rawPoints[stride+5] = 0.3*(Math.cos(time*3)+1.0);           
-        rawPoints[stride+6] = 1.0 - Math.abs(500-i) / pointCount;
+        rawPoints[stride+4] = 1.0// - (rawPoints[stride+2]/50.0 / sMA * 0.5 + 0.5);
+        rawPoints[stride+5] = 0.0;           
+        rawPoints[stride+6] = 0.0;//rawPoints[stride+2]/50.0 / sMA * 0.5 + 0.5;
         rawPoints[stride+7] = 1.0;
     }
     device.queue.writeBuffer(pointsBuffer, 0, rawPoints);
@@ -414,7 +487,7 @@ async function init() {
     Ymarker = Y(Emarker, eccentricity);
     rawMarkers[8] = 50*(A*Xmarker + F*Ymarker);
     rawMarkers[9] = 50*(B*Xmarker + G*Ymarker);
-    rawMarkers[10] = 0.0;
+    rawMarkers[10] = 50*(C*Xmarker + H*Ymarker);
     rawMarkers[11] = 1.0;
     rawMarkers[12] = 1.0;
     rawMarkers[13] = 0.0;
@@ -424,11 +497,23 @@ async function init() {
 
     const cameraX = 0;
     const cameraY = 0;
+    const cameraZ = 0;
     const cameraHeight = canvas.height*1.5;
     const cameraWidth = canvas.width*1.5;
-    const cameraMatrix = createOrthographicMatrix(cameraX - cameraWidth / 2, cameraX + cameraWidth / 2, cameraY - cameraHeight / 2, cameraY + cameraHeight / 2, -1, 1);
+    const cameraDepth = Math.max(canvas.width, canvas.height) * 1.5;
+    const cameraMatrix = createOrthographicMatrix(cameraX - cameraWidth / 2, cameraX + cameraWidth / 2, cameraY - cameraHeight / 2, cameraY + cameraHeight / 2, cameraZ - cameraDepth/2, cameraZ + cameraDepth/2);
+    
+    currentRotX += (targetRotX - currentRotX) * 0.1;
+    currentRotY += (targetRotY - currentRotY) * 0.1;
+
+    const rotXMatrix = createRotationX(currentRotX);
+    const rotYMatrix = createRotationY(currentRotY);
+    const worldRotation = multiply4x4(rotXMatrix, rotYMatrix);
+
+    const finalMVP = multiply4x4(cameraMatrix, worldRotation);
+    device.queue.writeBuffer(uniformBuffer, 0, finalMVP);
+
     const resolutionArray = new Float32Array([canvas.width, canvas.height]);
-    device.queue.writeBuffer(uniformBuffer, 0, cameraMatrix);
     device.queue.writeBuffer(uniformBuffer, 64, resolutionArray);
     
 
